@@ -20,6 +20,7 @@ DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloaded_configs")
 SERVER_ID_LOG_FILE = os.path.join(os.getcwd(), "downloaded_wg_ids.json") 
 MAX_DOWNLOADS_PER_SESSION = 20 
 RELOGIN_DELAY = 120 
+DOWNLOAD_SCOPE = os.environ.get("DOWNLOAD_SCOPE", "all").strip().lower()
 
 # Environment variables
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -133,8 +134,12 @@ class ProtonVPN:
             
             countries = self.driver.find_elements(By.CSS_SELECTOR, ".mb-6 details")
             download_counter = 0
+            first_only = DOWNLOAD_SCOPE == "first"
             
-            for country in countries:
+            for index, country in enumerate(countries):
+                if first_only and index > 0:
+                    print("[WG] DOWNLOAD_SCOPE=first: skipping remaining countries.")
+                    break
                 try:
                     country_name = country.find_element(By.CSS_SELECTOR, "summary").text.split('\n')[0].strip()
                     if download_counter >= MAX_DOWNLOADS_PER_SESSION:
@@ -253,6 +258,7 @@ class ProtonVPN:
         wg_done = False
         session = 0
         wg_ids = self.load_downloaded_ids()
+        print(f"DOWNLOAD_SCOPE: {DOWNLOAD_SCOPE}")
         
         try:
             while not wg_done and session < 20: 
