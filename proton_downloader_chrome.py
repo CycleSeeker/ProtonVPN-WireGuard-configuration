@@ -71,36 +71,72 @@ class ProtonVPN:
         with open(SERVER_ID_LOG_FILE, 'w') as f:
             json.dump(list(ids), f)
             
+    def save_debug(self):
+        try:
+            debug_dir = os.path.join(os.getcwd(), "debug")
+            if not os.path.exists(debug_dir):
+                os.makedirs(debug_dir)
+            with open(os.path.join(debug_dir, "page.html"), "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+            self.driver.save_screenshot(os.path.join(debug_dir, "screenshot.png"))
+            print(f"Debug artifacts saved to {debug_dir}")
+        except Exception as e:
+            print(f"Debug save failed: {e}")
+
+    def _click_submit_button(self):
+        try:
+            self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+        except Exception:
+            self.driver.find_element(By.CSS_SELECTOR, ".button-large").click()
+
     def login(self, username, password):
         try:
-            self.driver.get("https://protonvpn.com/")
-            time.sleep(1) 
-            self.driver.find_element(By.XPATH, "//a[contains(@href, 'https://account.protonvpn.com/login')]").click()
-            time.sleep(1) 
-            self.driver.find_element(By.ID, "username").send_keys(username)
-            time.sleep(1) 
-            self.driver.find_element(By.CSS_SELECTOR, ".button-large").click()
-            time.sleep(1) 
-            self.driver.find_element(By.ID, "password").send_keys(password)
-            time.sleep(1) 
-            self.driver.find_element(By.CSS_SELECTOR, ".button-large").click()
-            time.sleep(3) 
+            self.driver.get("https://account.protonvpn.com/login")
+            WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.ID, "username"))
+            )
+            time.sleep(1)
+            user_input = self.driver.find_element(By.ID, "username")
+            user_input.click()
+            user_input.send_keys(username)
+            time.sleep(1)
+            self._click_submit_button()
+            time.sleep(2)
+            password_input = WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.ID, "password"))
+            )
+            password_input.click()
+            password_input.send_keys(password)
+            time.sleep(1)
+            self._click_submit_button()
+            time.sleep(3)
+            if "login" in self.driver.current_url.lower():
+                raise Exception("Still on login page after submitting credentials.")
             print("Login Successful.")
             return True
         except Exception as e:
             print(f"Error Login: {e}")
+            print(f"Current URL: {self.driver.current_url}")
+            self.save_debug()
             return False
 
     def navigate_to_downloads(self):
         try:
             self.driver.get("https://account.protonvpn.com/downloads")
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".flex:nth-child(4) > .mr-8:nth-child(1) > .relative"))
+            WebDriverWait(self.driver, 30).until(
+                lambda d: (
+                    d.find_elements(By.CSS_SELECTOR, ".mb-6 details")
+                    or d.find_elements(By.XPATH, "//*[normalize-space(text())='WireGuard']")
+                )
             )
             time.sleep(2)
+            print(f"Downloads page loaded: {self.driver.current_url}")
             return True
         except Exception as e:
             print(f"Error Navigating to Downloads: {e}")
+            print(f"Current URL: {self.driver.current_url}")
+            print(f"Page title: {self.driver.title}")
+            self.save_debug()
             return False
 
     def logout(self):
@@ -125,7 +161,12 @@ class ProtonVPN:
             time.sleep(1) 
             
             # Click WireGuard Tab
-            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".flex:nth-child(4) > .mr-8:nth-child(1) > .relative"))).click()
+            try:
+                WebDriverWait(self.driver, 15).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, ".flex:nth-child(4) > .mr-8:nth-child(1) > .relative"))
+                ).click()
+            except Exception:
+                self.driver.find_element(By.XPATH, "//*[normalize-space(text())='WireGuard']").click()
             time.sleep(2) 
             
             # Click Platform (Selecting the 3rd option)
