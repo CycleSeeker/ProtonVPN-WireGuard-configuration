@@ -48,12 +48,16 @@ jobs:
         if-no-files-found: ignore
 
     - name: Commit and Push Changes
+      if: always()
       run: |
         git config --global user.name "GitHub Action Bot"
         git config --global user.email "action@github.com"
         
         if [ -f "ProtonVPN_WireGuard_Configs.zip" ]; then
           git add ProtonVPN_WireGuard_Configs.zip downloaded_wg_ids.json
+          if [ -f "proton_wireguard_links.txt" ]; then
+            git add proton_wireguard_links.txt
+          fi
           
           git commit -m "🔄 Update WireGuard Configs [$(date)]" || echo "No changes to commit"
           

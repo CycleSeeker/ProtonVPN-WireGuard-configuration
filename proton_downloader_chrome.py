@@ -6,6 +6,7 @@ import json
 import zipfile 
 import requests 
 import re 
+import urllib.parse 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -244,6 +245,25 @@ class ProtonVPN:
         except Exception as e: print(f"WG Loop Error: {e}")
         return True, downloaded_ids
 
+    def config_to_wireguard_uri(self, file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            private_key = re.search(r"^PrivateKey\s*=\s*(\S+)", content, re.M).group(1)
+            address = re.search(r"^Address\s*=\s*(.+)", content, re.M).group(1).strip()
+            public_key = re.search(r"^PublicKey\s*=\s*(\S+)", content, re.M).group(1)
+            endpoint = re.search(r"^Endpoint\s*=\s*(\S+)", content, re.M).group(1)
+            q = lambda s: urllib.parse.quote(s, safe="")
+            return (
+                f"wireguard://{q(private_key)}@{endpoint}"
+                f"?publickey={q(public_key)}"
+                f"&address={q(address)}"
+                f"&mtu=1280"
+                f"#WireGuard%20Peer%201"
+            )
+        except Exception:
+            return None
+
     def organize_and_send_files(self):
         print("\n###################### Organizing and Sending Files ######################")
         
@@ -287,7 +307,22 @@ class ProtonVPN:
                     archive_name = os.path.join(country, os.path.basename(file_path))
                     zipf.write(file_path, arcname=archive_name)
 
-        # 3. Send to Telegram (English Caption)
+        # 3. Generate WireGuard URI Links (one per line in a single TXT)
+        uri_lines = []
+        for country, files in wg_files.items():
+            for file_path in files:
+                uri = self.config_to_wireguard_uri(file_path)
+                if uri:
+                    uri_lines.append(uri)
+
+        links_filename = "proton_wireguard_links.txt"
+        links_path = os.path.join(os.getcwd(), links_filename)
+        if uri_lines:
+            with open(links_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(uri_lines) + "\n")
+            print(f"Wrote {len(uri_lines)} WireGuard links to {links_filename}.")
+
+        # 4. Send to Telegram (English Caption)
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             caption = (
                 f"**New ProtonVPN WireGuard**\n\n"
@@ -311,7 +346,7 @@ class ProtonVPN:
         
         # NOTE: os.remove(zip_path) has been removed permanently to keep the file for GitHub push.
         
-        # 4. Cleanup downloaded files (Keep the ZIP and JSON)
+        # 5. Cleanup downloaded files (Keep the ZIP, links TXT, and JSON)
         print("Cleaning up downloaded files...")
         for file in glob.glob(os.path.join(DOWNLOAD_DIR, '*')):
             os.remove(file)
