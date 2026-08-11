@@ -83,6 +83,24 @@ class ProtonVPN:
         except Exception as e:
             print(f"Debug save failed: {e}")
 
+    def _get_login_error_text(self):
+        try:
+            selectors = [
+                "[role='alert']",
+                ".text-danger",
+                ".error-message",
+                "[class*='error']",
+                "[class*='alert']",
+            ]
+            for selector in selectors:
+                for el in self.driver.find_elements(By.CSS_SELECTOR, selector):
+                    text = el.text.strip()
+                    if text:
+                        return text[:300]
+            return "none visible"
+        except Exception:
+            return "none visible"
+
     def _click_submit_button(self):
         try:
             self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
@@ -102,6 +120,7 @@ class ProtonVPN:
             time.sleep(1)
             self._click_submit_button()
             time.sleep(2)
+            print(f"After username step URL: {self.driver.current_url}")
             password_input = WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.ID, "password"))
             )
@@ -111,7 +130,10 @@ class ProtonVPN:
             self._click_submit_button()
             time.sleep(3)
             if "login" in self.driver.current_url.lower():
-                raise Exception("Still on login page after submitting credentials.")
+                raise Exception(
+                    "Still on login page after submitting credentials. "
+                    f"Page error: {self._get_login_error_text()}"
+                )
             print("Login Successful.")
             return True
         except Exception as e:
