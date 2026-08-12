@@ -1,4 +1,4 @@
-# فورک و از مخزن خصوصی خودتون استفاده کنید
+
 # ⚠️ Important Usage & Security Notice
 
 - Public configs in this repository are intended **only for normal usage** such as browsing websites and social media.
