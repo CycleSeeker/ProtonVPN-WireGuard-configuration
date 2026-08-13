@@ -1,6 +1,15 @@
 
 on:
   workflow_dispatch:
+    inputs:
+      download_scope:
+        description: 'Scope of download: all countries or only the first country'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - first
   schedule:
     - cron: '0 */24 * * *'
 
@@ -27,15 +36,28 @@ jobs:
         VPN_PASSWORD: ${{ secrets.VPN_PASSWORD }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python proton_downloader_chrome.py
+        DOWNLOAD_SCOPE: ${{ inputs.download_scope || 'all' }}
+      run: python -u proton_downloader_chrome.py
+
+    - name: Upload Debug Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug
+        path: debug/
+        if-no-files-found: ignore
 
     - name: Commit and Push Changes
+      if: always()
       run: |
         git config --global user.name "GitHub Action Bot"
         git config --global user.email "action@github.com"
         
         if [ -f "ProtonVPN_WireGuard_Configs.zip" ]; then
           git add ProtonVPN_WireGuard_Configs.zip downloaded_wg_ids.json
+          if [ -f "proton_wireguard_links.txt" ]; then
+            git add proton_wireguard_links.txt
+          fi
           
           git commit -m "🔄 Update WireGuard Configs [$(date)]" || echo "No changes to commit"
           

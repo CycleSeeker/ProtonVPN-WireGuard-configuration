@@ -6,6 +6,7 @@ import json
 import zipfile 
 import requests 
 import re 
+import urllib.parse 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -20,6 +21,7 @@ DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloaded_configs")
 SERVER_ID_LOG_FILE = os.path.join(os.getcwd(), "downloaded_wg_ids.json") 
 MAX_DOWNLOADS_PER_SESSION = 20 
 RELOGIN_DELAY = 120 
+DOWNLOAD_SCOPE = os.environ.get("DOWNLOAD_SCOPE", "all").strip().lower()
 
 # Environment variables
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -70,35 +72,94 @@ class ProtonVPN:
         with open(SERVER_ID_LOG_FILE, 'w') as f:
             json.dump(list(ids), f)
             
+    def save_debug(self):
+        try:
+            debug_dir = os.path.join(os.getcwd(), "debug")
+            if not os.path.exists(debug_dir):
+                os.makedirs(debug_dir)
+            with open(os.path.join(debug_dir, "page.html"), "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+            self.driver.save_screenshot(os.path.join(debug_dir, "screenshot.png"))
+            print(f"Debug artifacts saved to {debug_dir}")
+        except Exception as e:
+            print(f"Debug save failed: {e}")
+
+    def _get_login_error_text(self):
+        try:
+            selectors = [
+                "[role='alert']",
+                ".text-danger",
+                ".error-message",
+                "[class*='error']",
+                "[class*='alert']",
+            ]
+            for selector in selectors:
+                for el in self.driver.find_elements(By.CSS_SELECTOR, selector):
+                    text = el.text.strip()
+                    if text:
+                        return text[:300]
+            return "none visible"
+        except Exception:
+            return "none visible"
+
+    def _click_submit_button(self):
+        try:
+            self.driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+        except Exception:
+            self.driver.find_element(By.CSS_SELECTOR, ".button-large").click()
+
     def login(self, username, password):
         try:
-            self.driver.get("https://protonvpn.com/")
-            time.sleep(1) 
-            self.driver.find_element(By.XPATH, "//a[contains(@href, 'https://account.protonvpn.com/login')]").click()
-            time.sleep(1) 
-            self.driver.find_element(By.ID, "username").send_keys(username)
-            time.sleep(1) 
-            self.driver.find_element(By.CSS_SELECTOR, ".button-large").click()
-            time.sleep(1) 
-            self.driver.find_element(By.ID, "password").send_keys(password)
-            time.sleep(1) 
-            self.driver.find_element(By.CSS_SELECTOR, ".button-large").click()
-            time.sleep(3) 
+            self.driver.get("https://account.protonvpn.com/login")
+            WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.ID, "username"))
+            )
+            time.sleep(1)
+            user_input = self.driver.find_element(By.ID, "username")
+            user_input.click()
+            user_input.send_keys(username)
+            time.sleep(1)
+            self._click_submit_button()
+            time.sleep(2)
+            print(f"After username step URL: {self.driver.current_url}")
+            password_input = WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.ID, "password"))
+            )
+            password_input.click()
+            password_input.send_keys(password)
+            time.sleep(1)
+            self._click_submit_button()
+            time.sleep(3)
+            if "login" in self.driver.current_url.lower():
+                raise Exception(
+                    "Still on login page after submitting credentials. "
+                    f"Page error: {self._get_login_error_text()}"
+                )
             print("Login Successful.")
             return True
         except Exception as e:
             print(f"Error Login: {e}")
+            print(f"Current URL: {self.driver.current_url}")
+            self.save_debug()
             return False
 
     def navigate_to_downloads(self):
         try:
-            WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, ".navigation-item:nth-child(7) .text-ellipsis"))
-            ).click()
-            time.sleep(2) 
+            self.driver.get("https://account.protonvpn.com/downloads")
+            WebDriverWait(self.driver, 30).until(
+                lambda d: (
+                    d.find_elements(By.CSS_SELECTOR, ".mb-6 details")
+                    or d.find_elements(By.XPATH, "//*[normalize-space(text())='WireGuard']")
+                )
+            )
+            time.sleep(2)
+            print(f"Downloads page loaded: {self.driver.current_url}")
             return True
         except Exception as e:
             print(f"Error Navigating to Downloads: {e}")
+            print(f"Current URL: {self.driver.current_url}")
+            print(f"Page title: {self.driver.title}")
+            self.save_debug()
             return False
 
     def logout(self):
@@ -123,7 +184,12 @@ class ProtonVPN:
             time.sleep(1) 
             
             # Click WireGuard Tab
-            WebDriverWait(self.driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".flex:nth-child(4) > .mr-8:nth-child(1) > .relative"))).click()
+            try:
+                WebDriverWait(self.driver, 15).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, ".flex:nth-child(4) > .mr-8:nth-child(1) > .relative"))
+                ).click()
+            except Exception:
+                self.driver.find_element(By.XPATH, "//*[normalize-space(text())='WireGuard']").click()
             time.sleep(2) 
             
             # Click Platform (Selecting the 3rd option)
@@ -132,8 +198,12 @@ class ProtonVPN:
             
             countries = self.driver.find_elements(By.CSS_SELECTOR, ".mb-6 details")
             download_counter = 0
+            first_only = DOWNLOAD_SCOPE == "first"
             
-            for country in countries:
+            for index, country in enumerate(countries):
+                if first_only and index > 0:
+                    print("[WG] DOWNLOAD_SCOPE=first: skipping remaining countries.")
+                    break
                 try:
                     country_name = country.find_element(By.CSS_SELECTOR, "summary").text.split('\n')[0].strip()
                     if download_counter >= MAX_DOWNLOADS_PER_SESSION:
@@ -174,6 +244,25 @@ class ProtonVPN:
                 except Exception: continue
         except Exception as e: print(f"WG Loop Error: {e}")
         return True, downloaded_ids
+
+    def config_to_wireguard_uri(self, file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            private_key = re.search(r"^PrivateKey\s*=\s*(\S+)", content, re.M).group(1)
+            address = re.search(r"^Address\s*=\s*(.+)", content, re.M).group(1).strip()
+            public_key = re.search(r"^PublicKey\s*=\s*(\S+)", content, re.M).group(1)
+            endpoint = re.search(r"^Endpoint\s*=\s*(\S+)", content, re.M).group(1)
+            q = lambda s: urllib.parse.quote(s, safe="")
+            return (
+                f"wireguard://{q(private_key)}@{endpoint}"
+                f"?publickey={q(public_key)}"
+                f"&address={q(address)}"
+                f"&mtu=1280"
+                f"#WireGuard%20Peer%201"
+            )
+        except Exception:
+            return None
 
     def organize_and_send_files(self):
         print("\n###################### Organizing and Sending Files ######################")
@@ -218,7 +307,22 @@ class ProtonVPN:
                     archive_name = os.path.join(country, os.path.basename(file_path))
                     zipf.write(file_path, arcname=archive_name)
 
-        # 3. Send to Telegram (English Caption)
+        # 3. Generate WireGuard URI Links (one per line in a single TXT)
+        uri_lines = []
+        for country, files in wg_files.items():
+            for file_path in files:
+                uri = self.config_to_wireguard_uri(file_path)
+                if uri:
+                    uri_lines.append(uri)
+
+        links_filename = "proton_wireguard_links.txt"
+        links_path = os.path.join(os.getcwd(), links_filename)
+        if uri_lines:
+            with open(links_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(uri_lines) + "\n")
+            print(f"Wrote {len(uri_lines)} WireGuard links to {links_filename}.")
+
+        # 4. Send to Telegram (English Caption)
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             caption = (
                 f"**New ProtonVPN WireGuard**\n\n"
@@ -242,7 +346,7 @@ class ProtonVPN:
         
         # NOTE: os.remove(zip_path) has been removed permanently to keep the file for GitHub push.
         
-        # 4. Cleanup downloaded files (Keep the ZIP and JSON)
+        # 5. Cleanup downloaded files (Keep the ZIP, links TXT, and JSON)
         print("Cleaning up downloaded files...")
         for file in glob.glob(os.path.join(DOWNLOAD_DIR, '*')):
             os.remove(file)
@@ -252,6 +356,7 @@ class ProtonVPN:
         wg_done = False
         session = 0
         wg_ids = self.load_downloaded_ids()
+        print(f"DOWNLOAD_SCOPE: {DOWNLOAD_SCOPE}")
         
         try:
             while not wg_done and session < 20: 
